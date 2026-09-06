@@ -6,11 +6,13 @@ import { ServerListView } from './components/ServerListView';
 import { ServerConfigView } from './components/ServerConfigView';
 import { RealTimeStatsView } from './components/RealTimeStatsView';
 import { BotSyncApiView } from './components/BotSyncApiView';
-import { OAuthGuideModal } from './components/OAuthGuideModal';
 import { ThemeSelectorModal } from './components/ThemeSelectorModal';
 import { LandingPage } from './components/LandingPage';
-import { DiscordUser, DiscordGuild, BotLiveStats, AuthStatusResponse } from './types';
-import { RefreshCw, ExternalLink, ShieldCheck } from 'lucide-react';
+import { DiscordUser, DiscordGuild, BotLiveStats } from './types';
+import { RefreshCw, ExternalLink } from 'lucide-react';
+
+const BOT_CLIENT_ID = '1528261975438524517';
+const BOT_INVITE_URL = `https://discord.com/oauth2/authorize?client_id=${BOT_CLIENT_ID}&scope=bot%20applications.commands&permissions=8`;
 
 function AppContent() {
   const { mode, classes } = useTheme();
@@ -26,151 +28,111 @@ function AppContent() {
   const [guilds, setGuilds] = useState<DiscordGuild[]>([]);
   const [selectedGuild, setSelectedGuild] = useState<DiscordGuild | null>(null);
   const [botStats, setBotStats] = useState<BotLiveStats | null>(null);
-  const [authStatus, setAuthStatus] = useState<AuthStatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [oauthModalOpen, setOauthModalOpen] = useState(false);
   const [themeModalOpen, setThemeModalOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // Fetch authentication status and credentials info
-  const fetchAuthStatus = useCallback(async () => {
+  const fetchSession = useCallback(async () => {
     try {
-      const res = await fetch('/api/auth/status');
+      const res = await fetch('/api/auth/session', {
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+      });
+
       if (res.ok) {
-        const data: AuthStatusResponse = await res.json();
-        setAuthStatus(data);
-        setUser(data.user);
+        const data = await res.json();
+        setUser(data.user || null);
         return data;
       }
     } catch (err) {
-      console.error('Error fetching auth status:', err);
+      console.error('Error fetching dashboard session:', err);
     }
+
+    setUser(null);
     return null;
   }, []);
 
-  // Fetch user's Discord guilds
   const fetchGuilds = useCallback(async () => {
     try {
-      const res = await fetch('/api/guilds');
+      const res = await fetch('/api/dashboard/guilds', {
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+      });
+
       if (res.ok) {
         const data = await res.json();
         setGuilds(data.guilds || []);
+        return data.guilds || [];
       }
     } catch (err) {
-      console.error('Error fetching guilds:', err);
+      console.error('Error fetching dashboard guilds:', err);
+    }
+
+    setGuilds([]);
+    return [];
+  }, []);
+
+  const fetchBotStats = useCallback(async () => {
+    try {
+      const res = await fetch('/api/dashboard/stats', {
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setBotStats(data.stats || data.bot || null);
+      }
+    } catch (err) {
+      console.error('Error fetching bot telemetry:', err);
     }
   }, []);
 
-  // Initial load
   useEffect(() => {
     async function init() {
       setLoading(true);
-      const status = await fetchAuthStatus();
-      if (status?.authenticated) {
-        await fetchGuilds();
+      const session = await fetchSession();
+      if (session?.authenticated) {
+        await Promise.all([fetchGuilds(), fetchBotStats()]);
       }
       setLoading(false);
     }
+
     init();
-  }, [fetchAuthStatus, fetchGuilds]);
+  }, [fetchSession, fetchGuilds, fetchBotStats]);
 
-  // Connect to Server-Sent Events (SSE) for live bot stats
   useEffect(() => {
-    const eventSource = new EventSource('/api/stats/realtime');
+    const interval = window.setInterval(fetchBotStats, 15000);
+    return () => window.clearInterval(interval);
+  }, [fetchBotStats]);
 
-    eventSource.onmessage = (event) => {
-      try {
-        const liveStats = JSON.parse(event.data);
-        setBotStats(liveStats);
-      } catch (err) {
-        console.error('Error parsing SSE stats:', err);
-      }
-    };
-
-    eventSource.onerror = () => {
-      // Reconnection handled automatically
-    };
-
-    return () => {
-      eventSource.close();
-    };
-  }, []);
-
-  // Listen for OAuth postMessage from popup window
-  useEffect(() => {
-    const handleOAuthMessage = async (event: MessageEvent) => {
-      const origin = event.origin;
-      if (!origin.endsWith('.run.app') && !origin.includes('localhost')) {
-        return;
-      }
-
-      if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
-        const status = await fetchAuthStatus();
-        if (status?.authenticated) {
-          await fetchGuilds();
-        }
-      }
-    };
-
-    window.addEventListener('message', handleOAuthMessage);
-    return () => window.removeEventListener('message', handleOAuthMessage);
-  }, [fetchAuthStatus, fetchGuilds]);
-
-  // Handle Discord OAuth Login Click
-  const handleLoginClick = async () => {
-    try {
-      const res = await fetch('/api/auth/url');
-      const data = await res.json();
-
-      if (!data.url || !data.isConfigured) {
-        setOauthModalOpen(true);
-        return;
-      }
-
-      const authWindow = window.open(
-        data.url,
-        'discord_oauth',
-        'width=600,height=750,menubar=no,toolbar=no,status=no'
-      );
-
-      if (!authWindow) {
-        alert('Please allow popups for this site to authenticate with Discord.');
-      }
-    } catch (err) {
-      console.error('OAuth flow initiation failed:', err);
-      setOauthModalOpen(true);
-    }
+  const handleLoginClick = () => {
+    window.location.assign('/api/auth/discord');
   };
 
-  // Handle Demo Login Click
-  const handleDemoClick = async () => {
-    try {
-      const res = await fetch('/api/auth/demo', { method: 'POST' });
-      if (res.ok) {
-        await fetchAuthStatus();
-        await fetchGuilds();
-      }
-    } catch (err) {
-      console.error('Demo login error:', err);
-    }
-  };
-
-  // Handle Logout Click
   const handleLogoutClick = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
-      setUser(null);
-      setGuilds([]);
-      setSelectedGuild(null);
-      await fetchAuthStatus();
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+      });
     } catch (err) {
       console.error('Logout error:', err);
     }
+
+    setUser(null);
+    setGuilds([]);
+    setSelectedGuild(null);
+    setBotStats(null);
   };
 
-  const inviteUrl = authStatus?.inviteUrl || 'https://discord.com/oauth2/authorize?client_id=demo&scope=bot&permissions=8';
+  const handleDemoClick = () => {
+    console.warn('Demo mode is no longer available in the production GuildNexus dashboard.');
+    handleLoginClick();
+  };
 
-  // Handle tab switching from Sidebar or Navbar
+  const inviteUrl = BOT_INVITE_URL;
+
   const handleSelectTab = (tab: string) => {
     if (['overview', 'general', 'welcome', 'automod', 'leveling', 'modules', 'sync'].includes(tab)) {
       setServerSubTab(tab);
@@ -195,27 +157,11 @@ function AppContent() {
             window.location.hash = '#dashboard';
           }}
           onLoginClick={handleLoginClick}
-          onDemoClick={async () => {
-            await handleDemoClick();
-            setViewMode('dashboard');
-            window.location.hash = '#dashboard';
-          }}
-          onOpenOAuthGuide={() => setOauthModalOpen(true)}
+          onDemoClick={handleDemoClick}
+          onOpenOAuthGuide={handleLoginClick}
           onOpenThemeModal={() => setThemeModalOpen(true)}
         />
 
-        {/* OAuth Setup Instructions Modal */}
-        <OAuthGuideModal
-          isOpen={oauthModalOpen}
-          onClose={() => setOauthModalOpen(false)}
-          callbackUrl={authStatus?.callbackUrl || `${typeof window !== 'undefined' ? window.location.origin : ''}/auth/callback`}
-          isConfigured={authStatus?.isConfigured || false}
-          clientId={authStatus?.clientId || null}
-          credentialsStatus={authStatus?.credentialsStatus}
-          onDemoClick={handleDemoClick}
-        />
-
-        {/* Theme Customizer Modal */}
         <ThemeSelectorModal
           isOpen={themeModalOpen}
           onClose={() => setThemeModalOpen(false)}
@@ -226,7 +172,6 @@ function AppContent() {
 
   return (
     <div className={`min-h-screen flex ${classes.bgApp} ${classes.textPrimary} font-sans selection:bg-purple-600 selection:text-white transition-colors duration-200`}>
-      {/* Sleek Collapsible Sidebar */}
       <Sidebar
         user={user}
         activeTab={selectedGuild ? serverSubTab : activeTab}
@@ -254,9 +199,7 @@ function AppContent() {
         }}
       />
 
-      {/* Main Content Layout */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Top Header */}
         <Navbar
           user={user}
           guilds={guilds}
@@ -275,7 +218,7 @@ function AppContent() {
           onLoginClick={handleLoginClick}
           onDemoClick={handleDemoClick}
           onLogoutClick={handleLogoutClick}
-          onOpenOAuthGuide={() => setOauthModalOpen(true)}
+          onOpenOAuthGuide={handleLoginClick}
           onOpenThemeModal={() => setThemeModalOpen(true)}
           onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
           onGoToLanding={() => {
@@ -284,7 +227,6 @@ function AppContent() {
           }}
         />
 
-        {/* Dynamic Main Workspace */}
         <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
           {loading ? (
             <div className="flex flex-col items-center justify-center min-h-[50vh] space-y-3">
@@ -292,11 +234,10 @@ function AppContent() {
               <p className={`text-sm font-semibold ${mode === 'dark' ? 'text-slate-200' : 'text-slate-700'}`}>
                 Synchronizing GuildNexus...
               </p>
-              <p className="text-xs text-slate-500">Connecting to Discord Gateway and local state</p>
+              <p className="text-xs text-slate-500">Connecting to Discord and NyxEclipse</p>
             </div>
           ) : (
             <>
-              {/* View 1: Servers & Server Configuration */}
               {activeTab === 'servers' && (
                 selectedGuild ? (
                   <ServerConfigView
@@ -324,15 +265,13 @@ function AppContent() {
                 )
               )}
 
-              {/* View 2: Real-Time Statistics */}
               {activeTab === 'stats' && (
                 <RealTimeStatsView
                   stats={botStats}
-                  onRefresh={fetchAuthStatus}
+                  onRefresh={fetchBotStats}
                 />
               )}
 
-              {/* View 3: Bot Sync API Documentation */}
               {activeTab === 'sync-api' && (
                 <BotSyncApiView
                   botStats={botStats}
@@ -342,7 +281,6 @@ function AppContent() {
           )}
         </main>
 
-        {/* Footer */}
         <footer className={`border-t py-6 text-center text-xs transition-colors ${
           mode === 'dark'
             ? 'border-slate-800/80 bg-[#07030e]/60 text-slate-400'
@@ -374,10 +312,10 @@ function AppContent() {
                 Color Theme & Highlights
               </button>
               <button
-                onClick={() => setOauthModalOpen(true)}
+                onClick={handleLoginClick}
                 className="hover:text-purple-400 transition-colors font-medium"
               >
-                OAuth Guide
+                Connect Discord
               </button>
               <a
                 href={inviteUrl}
@@ -393,18 +331,6 @@ function AppContent() {
         </footer>
       </div>
 
-      {/* OAuth Setup Instructions Modal */}
-      <OAuthGuideModal
-        isOpen={oauthModalOpen}
-        onClose={() => setOauthModalOpen(false)}
-        callbackUrl={authStatus?.callbackUrl || `${window.location.origin}/auth/callback`}
-        isConfigured={authStatus?.isConfigured || false}
-        clientId={authStatus?.clientId || null}
-        credentialsStatus={authStatus?.credentialsStatus}
-        onDemoClick={handleDemoClick}
-      />
-
-      {/* Theme Customizer Modal */}
       <ThemeSelectorModal
         isOpen={themeModalOpen}
         onClose={() => setThemeModalOpen(false)}
