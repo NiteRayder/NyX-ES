@@ -1,6 +1,8 @@
 name: Merge GuildNexus WebDashboard
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -25,172 +27,58 @@ jobs:
         run: |
           cat > public/assets/js/DiscordOAuth.js <<'EOF'
           const SESSION_KEY = 'guildnexus_nyxeclipse_session';
-
-          export function getStoredSession() {
-            try {
-              return JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
-            } catch {
-              localStorage.removeItem(SESSION_KEY);
-              return null;
-            }
-          }
-
-          export function clearSession() {
-            localStorage.removeItem(SESSION_KEY);
-          }
-
-          export async function loginWithDiscord() {
-            const response = await fetch('/api/auth/url', { credentials: 'include' });
-            const data = await response.json();
-            if (!data?.url) throw new Error(data?.message || 'Discord OAuth is not configured.');
-            const popup = window.open(data.url, 'guildnexus_oauth', 'popup,width=520,height=760');
-            if (!popup) window.location.assign(data.url);
-          }
-
-          export async function handleOAuthCallback() {
-            const response = await fetch('/api/auth/status', { credentials: 'include', headers: { Accept: 'application/json' } });
-            if (!response.ok) return null;
-            const data = await response.json();
-            if (!data.authenticated || !data.user) return null;
-            const session = { authenticated: true, user: data.user, sessionToken: 'cookie-session' };
-            localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-            return session;
-          }
-
-          export async function refreshDashboardSession() {
-            return handleOAuthCallback();
-          }
-
-          export async function fetchDiscordUser() {
-            return getStoredSession()?.user || null;
-          }
-
-          export async function fetchManageableGuilds() {
-            const response = await fetch('/api/guilds', { credentials: 'include', headers: { Accept: 'application/json' } });
-            if (!response.ok) throw new Error('Unable to retrieve Discord servers.');
-            return (await response.json()).guilds || [];
-          }
-
-          export async function logoutFromDiscord() {
-            await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
-            clearSession();
-          }
-
-          export function getBotInviteUrl(guildId) {
-            const query = guildId ? `?guild_id=${encodeURIComponent(guildId)}` : '';
-            return `/api/bot/invite${query}`;
-          }
-
-          export const NYXECLIPSE_API = '';
+          export function getStoredSession(){try{return JSON.parse(localStorage.getItem(SESSION_KEY)||'null')}catch{localStorage.removeItem(SESSION_KEY);return null}}
+          export function clearSession(){localStorage.removeItem(SESSION_KEY)}
+          export async function loginWithDiscord(){const response=await fetch('/api/auth/url',{credentials:'include'});const data=await response.json();if(!data?.url)throw new Error(data?.message||'Discord OAuth is not configured.');const popup=window.open(data.url,'guildnexus_oauth','popup,width=520,height=760');if(!popup)window.location.assign(data.url)}
+          export async function handleOAuthCallback(){const response=await fetch('/api/auth/status',{credentials:'include',headers:{Accept:'application/json'}});if(!response.ok)return null;const data=await response.json();if(!data.authenticated||!data.user)return null;const session={authenticated:true,user:data.user,sessionToken:'cookie-session'};localStorage.setItem(SESSION_KEY,JSON.stringify(session));return session}
+          export async function refreshDashboardSession(){return handleOAuthCallback()}
+          export async function fetchDiscordUser(){return getStoredSession()?.user||null}
+          export async function fetchManageableGuilds(){const response=await fetch('/api/guilds',{credentials:'include',headers:{Accept:'application/json'}});if(!response.ok)throw new Error('Unable to retrieve Discord servers.');return(await response.json()).guilds||[]}
+          export async function logoutFromDiscord(){await fetch('/api/auth/logout',{method:'POST',credentials:'include'}).catch(()=>{});clearSession()}
+          export function getBotInviteUrl(guildId){const query=guildId?`?guild_id=${encodeURIComponent(guildId)}`:'';return `/api/bot/invite${query}`}
+          export const NYXECLIPSE_API='';
           EOF
 
       - name: Replace dashboard API adapter
         run: |
           cat > public/assets/js/dashboardApi.js <<'EOF'
-          async function request(path, options = {}) {
-            const response = await fetch(path, {
-              ...options,
-              credentials: 'include',
-              headers: {
-                Accept: 'application/json',
-                ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-                ...(options.headers || {}),
-              },
-            });
-
-            let data = null;
-            try { data = await response.json(); } catch {}
-            if (!response.ok) {
-              if (response.status === 401) localStorage.removeItem('guildnexus_nyxeclipse_session');
-              throw new Error(data?.error || `GuildNexus API request failed (${response.status}).`);
-            }
-            return data;
-          }
-
-          export const dashboardApi = {
-            me: async () => {
-              const data = await request('/api/auth/status');
-              return { user: data.user };
-            },
-
-            guilds: () => request('/api/guilds'),
-
-            guild: async (guildId) => {
-              const [guildsData, configData, resources] = await Promise.all([
-                request('/api/guilds'),
-                request(`/api/guilds/${encodeURIComponent(guildId)}/config`),
-                request(`/api/guilds/${encodeURIComponent(guildId)}/discord-data`),
-              ]);
-              const guild = (guildsData.guilds || []).find(item => item.id === guildId) || { id: guildId, name: 'Server' };
-              return {
-                guild: {
-                  ...guild,
-                  config: configData,
-                  channels: resources.channels?.length || 0,
-                  roles: resources.roles?.length || 0,
-                  memberCount: guild.approximateMemberCount ?? 0,
-                  humanCount: guild.approximateMemberCount ?? 0,
-                  logging: configData.logging || {},
-                },
-              };
-            },
-
-            resources: (guildId) => request(`/api/guilds/${encodeURIComponent(guildId)}/discord-data`),
-
-            member: async () => ({ member: null, unavailable: true, message: 'Member lookup is not exposed by the current NyX-ES API yet.' }),
-
-            auditLog: async () => ({ enabled: false, events: [] }),
-
-            updateLogging: async (guildId, patch) => {
-              const current = await request(`/api/guilds/${encodeURIComponent(guildId)}/config`);
-              return request(`/api/guilds/${encodeURIComponent(guildId)}/config`, {
-                method: 'PUT',
-                body: JSON.stringify({ ...current, logging: { ...(current.logging || {}), ...patch } }),
-              });
-            },
-
-            cases: async () => ({ cases: [], unavailable: true }),
-
-            updateConfig: (guildId, patch) => request(`/api/guilds/${encodeURIComponent(guildId)}/config`, {
-              method: 'PUT',
-              body: JSON.stringify(patch),
-            }).then(data => data.config || data),
+          async function request(path,options={}){const response=await fetch(path,{...options,credentials:'include',headers:{Accept:'application/json',...(options.body?{'Content-Type':'application/json'}:{}),...(options.headers||{})}});let data=null;try{data=await response.json()}catch{}if(!response.ok){if(response.status===401)localStorage.removeItem('guildnexus_nyxeclipse_session');throw new Error(data?.error||`GuildNexus API request failed (${response.status}).`)}return data}
+          export const dashboardApi={
+            me:async()=>{const data=await request('/api/auth/status');return{user:data.user}},
+            guilds:()=>request('/api/guilds'),
+            guild:async guildId=>{const[guildsData,configData,resources]=await Promise.all([request('/api/guilds'),request(`/api/guilds/${encodeURIComponent(guildId)}/config`),request(`/api/guilds/${encodeURIComponent(guildId)}/discord-data`)]);const guild=(guildsData.guilds||[]).find(item=>item.id===guildId)||{id:guildId,name:'Server'};return{guild:{...guild,config:configData,channels:resources.channels?.length||0,roles:resources.roles?.length||0,memberCount:guild.approximateMemberCount??0,humanCount:guild.approximateMemberCount??0,logging:configData.logging||{}}}},
+            resources:guildId=>request(`/api/guilds/${encodeURIComponent(guildId)}/discord-data`),
+            member:async()=>({member:null,unavailable:true,message:'Member lookup is not exposed by the current NyX-ES API yet.'}),
+            auditLog:async()=>({enabled:false,events:[]}),
+            updateLogging:async(guildId,patch)=>{const current=await request(`/api/guilds/${encodeURIComponent(guildId)}/config`);return request(`/api/guilds/${encodeURIComponent(guildId)}/config`,{method:'PUT',body:JSON.stringify({...current,logging:{...(current.logging||{}),...patch}})})},
+            cases:async()=>({cases:[],unavailable:true}),
+            updateConfig:(guildId,patch)=>request(`/api/guilds/${encodeURIComponent(guildId)}/config`,{method:'PUT',body:JSON.stringify(patch)}).then(data=>data.config||data),
           };
-
-          export function getSelectedGuildId() {
-            return localStorage.getItem('guildnexus_selected_guild');
-          }
-
-          export function setSelectedGuildId(guildId) {
-            if (guildId) localStorage.setItem('guildnexus_selected_guild', guildId);
-            else localStorage.removeItem('guildnexus_selected_guild');
-          }
+          export function getSelectedGuildId(){return localStorage.getItem('guildnexus_selected_guild')}
+          export function setSelectedGuildId(guildId){if(guildId)localStorage.setItem('guildnexus_selected_guild',guildId);else localStorage.removeItem('guildnexus_selected_guild')}
           EOF
 
       - name: Patch NyX-ES server integration
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          path = Path('server.ts')
-          text = path.read_text()
-
-          text = text.replace('const PORT = 3000;', 'const PORT = Number(process.env.PORT || process.env.SERVER_PORT || 3000);')
-
-          marker = "  app.use(cookieParser());\n"
-          integration = '''\n  // GuildNexus WebDashboard is served by the same Express application.\n  // Keeping the dashboard same-origin means it uses the existing NyX-ES\n  // OAuth cookie/session instead of maintaining a second authentication stack.\n  const publicPath = path.join(process.cwd(), 'public');\n  app.use(express.static(publicPath));\n  app.get(['/dashboard', '/dashboard/', '/dashboard/index.html'], (req, res) => {\n    res.sendFile(path.join(publicPath, 'dashboard', 'index.html'));\n  });\n'''
+          path=Path('server.ts')
+          text=path.read_text()
+          text=text.replace('const PORT = 3000;','const PORT = Number(process.env.PORT || process.env.SERVER_PORT || 3000);')
+          marker='  app.use(cookieParser());\n'
+          integration='''\n  // GuildNexus WebDashboard is served by this same Express application.\n  const publicPath = path.join(process.cwd(), 'public');\n  app.use(express.static(publicPath));\n  app.get(['/dashboard', '/dashboard/', '/dashboard/index.html'], (req, res) => {\n    res.sendFile(path.join(publicPath, 'dashboard', 'index.html'));\n  });\n'''
           if integration.strip() not in text:
-              text = text.replace(marker, marker + integration, 1)
-
+              text=text.replace(marker,marker+integration,1)
           path.write_text(text)
           PY
 
       - name: Update package identity
         run: |
           node - <<'NODE'
-          const fs = require('fs');
-          const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          p.name = 'nyxeclipse-guildnexus';
-          fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          const fs=require('fs');
+          const p=JSON.parse(fs.readFileSync('package.json','utf8'));
+          p.name='nyxeclipse-guildnexus';
+          fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');
           NODE
 
       - name: Validate merged application
@@ -205,9 +93,6 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add public/dashboard public/assets/js/DiscordOAuth.js public/assets/js/dashboardApi.js server.ts package.json
-          if git diff --cached --quiet; then
-            echo 'No merge changes detected.'
-            exit 0
-          fi
+          if git diff --cached --quiet; then echo 'No merge changes detected.'; exit 0; fi
           git commit -m 'feat: merge GuildNexus WebDashboard into NyX-ES'
           git push
