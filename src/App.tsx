@@ -104,9 +104,10 @@ function AppContent() {
   }, [fetchSession, fetchGuilds, fetchBotStats]);
 
   useEffect(() => {
+    if (!user) return undefined;
     const interval = window.setInterval(fetchBotStats, 15000);
     return () => window.clearInterval(interval);
-  }, [fetchBotStats]);
+  }, [user, fetchBotStats]);
 
   const handleLoginClick = () => {
     window.location.assign('/api/auth/discord');
