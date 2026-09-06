@@ -17,8 +17,10 @@ const BOT_INVITE_URL = `https://discord.com/oauth2/authorize?client_id=${BOT_CLI
 function AppContent() {
   const { mode, classes } = useTheme();
   const [viewMode, setViewMode] = useState<'landing' | 'dashboard'>(() => {
-    if (typeof window !== 'undefined' && window.location.hash === '#dashboard') {
-      return 'dashboard';
+    if (typeof window !== 'undefined') {
+      return window.location.hash === '#dashboard' || window.location.hash.startsWith('#session=')
+        ? 'dashboard'
+        : 'landing';
     }
     return 'landing';
   });
@@ -124,6 +126,8 @@ function AppContent() {
     setGuilds([]);
     setSelectedGuild(null);
     setBotStats(null);
+    setViewMode('landing');
+    window.location.hash = '';
   };
 
   const handleDemoClick = () => {
