@@ -109,10 +109,32 @@ export default {
     const upstreamOrigin = env.NYXECLIPSE_ORIGIN || DEFAULT_NYXECLIPSE_ORIGIN;
     const dashboardOrigin = env.DASHBOARD_ORIGIN || DEFAULT_DASHBOARD_ORIGIN;
 
-    // OAuth callback is intentionally /auth/callback. Do not rewrite it to
-    // /api/auth/discord/callback because NyX-ES handles the callback at the
-    // /auth/callback route and Discord's registered redirect URI must match it.
-    if (url.pathname.startsWith('/api/') || url.pathname === '/auth/callback' || url.pathname === '/auth/callback/') {
+    if (url.pathname === '/api/auth/discord' && url.searchParams.has('code')) {
+      // Discord's registered redirect URI is /api/auth/discord. NyxEclipse's
+      // actual callback handler remains /api/auth/discord/callback, so the
+      // Worker keeps the public URI while routing the authorization response
+      // to the internal callback endpoint.
+      try {
+        const upstream = await fetch(
+          buildOriginRequest(request, upstreamOrigin, '/api/auth/discord/callback'),
+        );
+        return addCorsHeaders(upstream, dashboardOrigin);
+      } catch (error) {
+        return new Response(JSON.stringify({
+          error: 'NyxEclipse OAuth callback upstream unavailable',
+          detail: error instanceof Error ? error.message : String(error),
+        }), {
+          status: 502,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': dashboardOrigin,
+            'Access-Control-Allow-Credentials': 'true',
+          },
+        });
+      }
+    }
+
+    if (url.pathname.startsWith('/api/')) {
       if (request.method === 'OPTIONS') {
         return new Response(null, {
           status: 204,
