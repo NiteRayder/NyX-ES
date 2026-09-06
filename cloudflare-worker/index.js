@@ -57,9 +57,10 @@ const NAV_ROUTES = {
   '../support-server.html': '/support/',
 };
 
-function buildOriginRequest(request, origin) {
+function buildOriginRequest(request, origin, pathnameOverride = null) {
   const incoming = new URL(request.url);
-  const target = new URL(`${origin}${incoming.pathname}${incoming.search}`);
+  const pathname = pathnameOverride || incoming.pathname;
+  const target = new URL(`${origin}${pathname}${incoming.search}`);
   const headers = new Headers(request.headers);
   headers.delete('host');
   headers.set('X-Forwarded-Host', incoming.host);
@@ -108,7 +109,16 @@ export default {
     const upstreamOrigin = env.NYXECLIPSE_ORIGIN || DEFAULT_NYXECLIPSE_ORIGIN;
     const dashboardOrigin = env.DASHBOARD_ORIGIN || DEFAULT_DASHBOARD_ORIGIN;
 
-    if (url.pathname.startsWith('/api/')) {
+    // Backward compatibility for the old OAuth callback URI. The current
+    // NyxEclipse OAuth endpoint is /api/auth/discord/callback, but older
+    // Discord application settings may still point at /auth/callback.
+    // Rewrite that legacy path before proxying so existing registrations do
+    // not strand users on a static SPA page.
+    const oauthCallbackPath = url.pathname === '/auth/callback' || url.pathname === '/auth/callback/'
+      ? '/api/auth/discord/callback'
+      : null;
+
+    if (url.pathname.startsWith('/api/') || oauthCallbackPath) {
       if (request.method === 'OPTIONS') {
         return new Response(null, {
           status: 204,
@@ -124,7 +134,7 @@ export default {
       }
 
       try {
-        const upstream = await fetch(buildOriginRequest(request, upstreamOrigin));
+        const upstream = await fetch(buildOriginRequest(request, upstreamOrigin, oauthCallbackPath));
         return addCorsHeaders(upstream, dashboardOrigin);
       } catch (error) {
         return new Response(JSON.stringify({
