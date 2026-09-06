@@ -1,0 +1,6 @@
+{
+  "name": "GuildNexus",
+  "description": "The official web dashboard for the NyxEclipse Discord bot by NiteRayder, featuring server configuration, moderation cases, music controls, tickets, leveling, and live bot sync.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
