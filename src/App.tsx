@@ -90,18 +90,18 @@ function AppContent() {
     }
   }, []);
 
-  useEffect(() => {
-    async function init() {
-      setLoading(true);
-      const session = await fetchSession();
-      if (session?.authenticated) {
-        await Promise.all([fetchGuilds(), fetchBotStats()]);
-      }
-      setLoading(false);
+  const initializeDashboard = useCallback(async () => {
+    setLoading(true);
+    const session = await fetchSession();
+    if (session?.authenticated) {
+      await Promise.all([fetchGuilds(), fetchBotStats()]);
     }
-
-    init();
+    setLoading(false);
   }, [fetchSession, fetchGuilds, fetchBotStats]);
+
+  useEffect(() => {
+    initializeDashboard();
+  }, [initializeDashboard]);
 
   useEffect(() => {
     if (!user) return undefined;
@@ -109,7 +109,31 @@ function AppContent() {
     return () => window.clearInterval(interval);
   }, [user, fetchBotStats]);
 
+  useEffect(() => {
+    const handleOAuthReturn = () => {
+      const hash = window.location.hash;
+      if (!hash.startsWith('#session=') && hash !== '#dashboard') return;
+
+      setViewMode('dashboard');
+      initializeDashboard();
+
+      // The OAuth callback uses the hash only as a routing signal. The actual
+      // session is stored in the secure HttpOnly gn_session cookie, so never
+      // persist the session identifier in localStorage or expose it to UI code.
+      if (hash.startsWith('#session=')) {
+        window.history.replaceState(null, document.title, `${window.location.pathname}#dashboard`);
+      }
+    };
+
+    window.addEventListener('hashchange', handleOAuthReturn);
+    handleOAuthReturn();
+    return () => window.removeEventListener('hashchange', handleOAuthReturn);
+  }, [initializeDashboard]);
+
   const handleLoginClick = () => {
+    // NyxEclipse owns the OAuth client secret and state validation. Keep the
+    // authorization-code exchange entirely server-side and navigate through
+    // the same-origin Worker so the secure session cookie survives the flow.
     window.location.assign('/api/auth/discord');
   };
 
@@ -239,107 +263,36 @@ function AppContent() {
               <p className={`text-sm font-semibold ${mode === 'dark' ? 'text-slate-200' : 'text-slate-700'}`}>
                 Synchronizing GuildNexus...
               </p>
-              <p className="text-xs text-slate-500">Connecting to Discord and NyxEclipse</p>
             </div>
+          ) : selectedGuild ? (
+            <ServerConfigView
+              guild={selectedGuild}
+              subTab={serverSubTab}
+              onSubTabChange={setServerSubTab}
+              onBack={() => setSelectedGuild(null)}
+            />
+          ) : activeTab === 'servers' ? (
+            <ServerListView
+              guilds={guilds}
+              onSelectGuild={(guild) => {
+                setSelectedGuild(guild);
+                setServerSubTab('overview');
+              }}
+              inviteUrl={inviteUrl}
+              user={user}
+            />
+          ) : activeTab === 'stats' ? (
+            <RealTimeStatsView stats={botStats} />
+          ) : activeTab === 'sync' ? (
+            <BotSyncApiView botStats={botStats} />
           ) : (
-            <>
-              {activeTab === 'servers' && (
-                selectedGuild ? (
-                  <ServerConfigView
-                    guild={selectedGuild}
-                    onBack={() => {
-                      setSelectedGuild(null);
-                      setActiveTab('servers');
-                    }}
-                    inviteUrl={inviteUrl}
-                    activeSubTab={serverSubTab}
-                    onTabChange={(tab) => setServerSubTab(tab)}
-                  />
-                ) : (
-                  <ServerListView
-                    user={user}
-                    guilds={guilds}
-                    onSelectGuild={(guild) => {
-                      setSelectedGuild(guild);
-                      setServerSubTab('overview');
-                    }}
-                    onLoginClick={handleLoginClick}
-                    onDemoClick={handleDemoClick}
-                    inviteUrl={inviteUrl}
-                  />
-                )
-              )}
-
-              {activeTab === 'stats' && (
-                <RealTimeStatsView
-                  stats={botStats}
-                  onRefresh={fetchBotStats}
-                />
-              )}
-
-              {activeTab === 'sync-api' && (
-                <BotSyncApiView
-                  botStats={botStats}
-                />
-              )}
-            </>
+            <div className="rounded-2xl border border-white/10 bg-slate-950/50 p-8">
+              <h2 className="text-xl font-bold capitalize">{activeTab}</h2>
+              <p className="mt-2 text-sm opacity-70">This section is being wired into the live GuildNexus API.</p>
+            </div>
           )}
         </main>
-
-        <footer className={`border-t py-6 text-center text-xs transition-colors ${
-          mode === 'dark'
-            ? 'border-slate-800/80 bg-[#07030e]/60 text-slate-400'
-            : 'border-slate-200 bg-slate-50 text-slate-500'
-        }`}>
-          <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-            <div className="flex items-center space-x-2">
-              <span className="font-bold tracking-tight">GuildNexus</span>
-              <span>•</span>
-              <span>Discord Bot Dashboard</span>
-              <span className="hidden md:inline px-1.5 py-0.5 rounded bg-gradient-to-r from-slate-200 via-slate-300 to-slate-400 text-slate-950 font-black text-[9px] uppercase tracking-wider">
-                SILVER TRIM
-              </span>
-            </div>
-            <div className="flex items-center space-x-4">
-              <button
-                onClick={() => {
-                  setViewMode('landing');
-                  window.location.hash = '';
-                }}
-                className="hover:text-purple-400 text-purple-300 font-semibold transition-colors"
-              >
-                ← Bot Landing Page
-              </button>
-              <button
-                onClick={() => setThemeModalOpen(true)}
-                className="hover:text-purple-400 transition-colors font-medium"
-              >
-                Color Theme & Highlights
-              </button>
-              <button
-                onClick={handleLoginClick}
-                className="hover:text-purple-400 transition-colors font-medium"
-              >
-                Connect Discord
-              </button>
-              <a
-                href={inviteUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="hover:text-purple-400 transition-colors font-medium inline-flex items-center space-x-1"
-              >
-                <span>Invite Bot</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            </div>
-          </div>
-        </footer>
       </div>
-
-      <ThemeSelectorModal
-        isOpen={themeModalOpen}
-        onClose={() => setThemeModalOpen(false)}
-      />
     </div>
   );
 }
