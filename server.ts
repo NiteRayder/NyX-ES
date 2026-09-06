@@ -128,10 +128,17 @@ const DEMO_USER: DiscordUser = {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT || process.env.SERVER_PORT || 3000);
 
   app.use(express.json());
   app.use(cookieParser());
+
+  // GuildNexus WebDashboard is served by this same Express application.
+  const publicPath = path.join(process.cwd(), 'public');
+  app.use(express.static(publicPath));
+  app.get(['/dashboard', '/dashboard/', '/dashboard/index.html'], (req, res) => {
+    res.sendFile(path.join(publicPath, 'dashboard', 'index.html'));
+  });
 
   // Helper middleware to get session
   const getSession = (req: express.Request): UserSession | null => {
